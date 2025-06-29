@@ -18,6 +18,7 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import io
+import csv
 
 class UVB76StreamDecoder:
     def __init__(self):
@@ -359,9 +360,14 @@ class UVB76StreamDecoder:
         ttk.Button(pattern_controls, text="Clear", 
                   command=self.clear_pattern_display).pack(side=tk.RIGHT, padx=(5, 0))
         
-        # Export button
-        ttk.Button(pattern_controls, text="Export", 
-                  command=self.export_decoded_data).pack(side=tk.RIGHT)
+        # Export buttons with more options
+        export_frame = ttk.Frame(pattern_controls)
+        export_frame.pack(side=tk.RIGHT)
+        
+        ttk.Button(export_frame, text="Export Analysis", 
+                  command=self.export_decoded_data).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(export_frame, text="Export Binary", 
+                  command=self.export_binary_stream).pack(side=tk.LEFT)
         
         # Pattern text display
         self.pattern_text = scrolledtext.ScrolledText(pattern_frame, height=10,
@@ -480,9 +486,264 @@ class UVB76StreamDecoder:
         self.pattern_text.config(state='disabled')
     
     def export_decoded_data(self):
-        """Export decoded data from the data tab"""
-        # This would export the current decoded data
-        messagebox.showinfo("Export", "Decoded data export functionality")
+        """Export comprehensive decoded data analysis from the data tab"""
+        if len(self.binary_buffer) < 8:
+            messagebox.showwarning("Export Warning", "Insufficient data for analysis export.\nNeed at least 8 bits of data.")
+            return
+        
+        # Get file path
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("Markdown files", "*.md"),
+                ("All files", "*.*")
+            ],
+            title="Export Decoded Data Analysis",
+            initialname=f"uvb76_analysis_{int(time.time())}.txt"
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                # Header information
+                f.write("UVB-76 LIVE STREAM DECODER - ANALYSIS REPORT\n")
+                f.write("=" * 50 + "\n\n")
+                
+                f.write(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n")
+                if self.session_start_time:
+                    session_duration = time.time() - self.session_start_time
+                    f.write(f"Session Duration: {session_duration:.1f} seconds\n")
+                f.write(f"Total Data Bits: {len(self.binary_buffer)}\n")
+                f.write(f"Stream URL: {getattr(self, 'current_url', 'Unknown')}\n\n")
+                
+                # Binary stream data
+                recent_bits = list(self.binary_buffer)[-500:]  # Last 500 bits for detailed analysis
+                binary_string = ''.join([str(bit) for bit in recent_bits])
+                
+                f.write("BINARY STREAM DATA:\n")
+                f.write("-" * 20 + "\n")
+                # Group into bytes for readability
+                grouped = ' '.join([binary_string[i:i+8] for i in range(0, len(binary_string), 8)])
+                f.write(f"Recent Binary Data (last {len(recent_bits)} bits):\n")
+                f.write(f"{grouped}\n\n")
+                
+                # Frequency mapping
+                f.write("FREQUENCY MAPPING:\n")
+                f.write("-" * 17 + "\n")
+                f.write("0 = 21.53 Hz (FSK Data Tone 1)\n")
+                f.write("1 = 26.92 Hz (FSK Data Tone 2)\n")
+                f.write("32.30 Hz = Carrier/Buzzer (Ignored in binary data)\n\n")
+                
+                # Statistical analysis
+                ones_count = sum(recent_bits)
+                zeros_count = len(recent_bits) - ones_count
+                f.write("STATISTICAL ANALYSIS:\n")
+                f.write("-" * 20 + "\n")
+                f.write(f"1s Count: {ones_count} ({ones_count/len(recent_bits)*100:.1f}%)\n")
+                f.write(f"0s Count: {zeros_count} ({zeros_count/len(recent_bits)*100:.1f}%)\n")
+                f.write(f"1s/0s Ratio: {ones_count/max(zeros_count,1):.2f}\n\n")
+                
+                # Pattern analysis
+                patterns_result = self.analyze_patterns(recent_bits)
+                if isinstance(patterns_result, dict):
+                    patterns = patterns_result.get('patterns', [])
+                    decoded = patterns_result.get('decoded', {})
+                    
+                    f.write("PATTERN ANALYSIS:\n")
+                    f.write("-" * 16 + "\n")
+                    f.write("Repeating Patterns:\n")
+                    for pattern in patterns:
+                        f.write(f"  {pattern}\n")
+                    f.write("\n")
+                    
+                    # Decoding attempts
+                    f.write("DECODING ATTEMPTS:\n")
+                    f.write("-" * 17 + "\n")
+                    
+                    for method, result in decoded.items():
+                        if result and result != "Decode failed":
+                            f.write(f"{method.replace('_', ' ').title()}: {result}\n")
+                    f.write("\n")
+                
+                # Monolit coding analysis
+                monolit_result = self.detect_monolit_coding(recent_bits)
+                f.write("MONOLIT CODING ANALYSIS:\n")
+                f.write("-" * 24 + "\n")
+                
+                if 'error' not in monolit_result:
+                    f.write(f"Likelihood: {monolit_result.get('monolit_likelihood', 'Unknown')}\n")
+                    f.write(f"Callsign Candidates: {monolit_result.get('callsign_candidates', 'None')}\n")
+                    f.write(f"5-Digit ID Groups: {monolit_result.get('five_digit_groups', 'None')}\n")
+                    f.write(f"8-Digit Message Blocks: {monolit_result.get('eight_digit_blocks', 'None')}\n")
+                    f.write(f"Code Word Candidates: {monolit_result.get('code_word_candidates', 'None')}\n")
+                    
+                    structure = monolit_result.get('structure_analysis', [])
+                    if structure:
+                        f.write("Structure Analysis:\n")
+                        for item in structure:
+                            f.write(f"  {item}\n")
+                else:
+                    f.write(f"Analysis Error: {monolit_result['error']}\n")
+                f.write("\n")
+                
+                # Run length analysis
+                f.write("RUN LENGTH ANALYSIS:\n")
+                f.write("-" * 19 + "\n")
+                runs = []
+                if recent_bits:
+                    current_bit = recent_bits[0]
+                    current_run = 1
+                    
+                    for bit in recent_bits[1:]:
+                        if bit == current_bit:
+                            current_run += 1
+                        else:
+                            runs.append((current_bit, current_run))
+                            current_bit = bit
+                            current_run = 1
+                    runs.append((current_bit, current_run))
+                    
+                    f.write("Last 15 runs:\n")
+                    for bit, length in runs[-15:]:
+                        f.write(f"  {bit}: {length} bits\n")
+                f.write("\n")
+                
+                # FSK state history
+                if hasattr(self, 'fsk_state_history') and self.fsk_state_history:
+                    f.write("FSK STATE TRANSITIONS:\n")
+                    f.write("-" * 21 + "\n")
+                    for i, state_info in enumerate(self.fsk_state_history[-20:]):  # Last 20 transitions
+                        timestamp = state_info.get('timestamp', 0)
+                        if self.session_start_time:
+                            relative_time = timestamp - self.session_start_time
+                            f.write(f"  {relative_time:6.1f}s: {state_info.get('state', 'Unknown')} "
+                                   f"(mag: {state_info.get('magnitude', 0):.1f})\n")
+                f.write("\n")
+                
+                # Current analysis from pattern text display
+                if hasattr(self, 'pattern_text'):
+                    try:
+                        pattern_content = self.pattern_text.get(1.0, tk.END).strip()
+                        if pattern_content:
+                            f.write("DETAILED PATTERN ANALYSIS:\n")
+                            f.write("-" * 26 + "\n")
+                            f.write(pattern_content)
+                            f.write("\n\n")
+                    except:
+                        pass
+                
+                # Footer
+                f.write("-" * 50 + "\n")
+                f.write("End of Analysis Report\n")
+                f.write("Generated by UVB-76 Live Stream Decoder\n")
+                f.write("https://github.com/aaroncelestian/UVB-76-decoder\n")
+            
+            messagebox.showinfo("Export Complete", 
+                              f"Analysis exported successfully to:\n{filename}\n\n"
+                              f"Contains: Binary data, pattern analysis, decoding attempts,\n"
+                              f"Monolit analysis, statistics, and FSK state history.")
+            
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export analysis:\n{e}")
+    
+    def export_binary_stream(self):
+        """Export raw binary stream data in multiple formats"""
+        if len(self.binary_buffer) < 1:
+            messagebox.showwarning("Export Warning", "No binary data available for export.")
+            return
+        
+        # Get file path
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[
+                ("CSV files", "*.csv"),
+                ("Text files", "*.txt"),
+                ("Binary files", "*.bin"),
+                ("All files", "*.*")
+            ],
+            title="Export Binary Stream Data",
+            initialname=f"uvb76_binary_{int(time.time())}.csv"
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            file_ext = filename.lower().split('.')[-1]
+            
+            if file_ext == 'csv':
+                # Export as CSV with timestamps
+                with open(filename, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['Bit_Number', 'Binary_Value', 'Frequency_Hz', 'Timestamp', 'Session_Time'])
+                    
+                    for i, bit in enumerate(self.binary_buffer):
+                        freq = 21.53 if bit == 0 else 26.92
+                        # Use binary log timestamps if available
+                        if hasattr(self, 'binary_log') and i < len(self.binary_log):
+                            timestamp = self.binary_log[i].get('timestamp', '')
+                            session_time = self.binary_log[i].get('session_time', '')
+                        else:
+                            timestamp = ''
+                            session_time = ''
+                        
+                        writer.writerow([i+1, bit, freq, timestamp, session_time])
+                
+            elif file_ext == 'bin':
+                # Export as binary file
+                with open(filename, 'wb') as f:
+                    # Convert to bytes (8 bits per byte)
+                    binary_string = ''.join([str(bit) for bit in self.binary_buffer])
+                    # Pad to multiple of 8
+                    while len(binary_string) % 8 != 0:
+                        binary_string += '0'
+                    
+                    for i in range(0, len(binary_string), 8):
+                        byte = binary_string[i:i+8]
+                        f.write(bytes([int(byte, 2)]))
+                
+            else:  # txt or other
+                # Export as formatted text
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write("UVB-76 BINARY STREAM DATA\n")
+                    f.write("=" * 25 + "\n\n")
+                    
+                    f.write(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n")
+                    f.write(f"Total Bits: {len(self.binary_buffer)}\n")
+                    f.write("Frequency Mapping: 0=21.53Hz, 1=26.92Hz\n\n")
+                    
+                    # Raw binary string
+                    binary_string = ''.join([str(bit) for bit in self.binary_buffer])
+                    f.write("RAW BINARY STRING:\n")
+                    f.write("-" * 18 + "\n")
+                    f.write(binary_string + "\n\n")
+                    
+                    # Grouped by bytes
+                    f.write("GROUPED BY BYTES:\n")
+                    f.write("-" * 16 + "\n")
+                    grouped = ' '.join([binary_string[i:i+8] for i in range(0, len(binary_string), 8)])
+                    f.write(grouped + "\n\n")
+                    
+                    # Bit-by-bit with frequencies
+                    f.write("BIT-BY-BIT BREAKDOWN:\n")
+                    f.write("-" * 20 + "\n")
+                    for i, bit in enumerate(self.binary_buffer[:100]):  # First 100 bits
+                        freq = 21.53 if bit == 0 else 26.92
+                        f.write(f"Bit {i+1:3d}: {bit} ({freq} Hz)\n")
+                    
+                    if len(self.binary_buffer) > 100:
+                        f.write(f"... and {len(self.binary_buffer) - 100} more bits\n")
+            
+            messagebox.showinfo("Export Complete", 
+                              f"Binary stream exported successfully to:\n{filename}\n\n"
+                              f"Format: {file_ext.upper()}\n"
+                              f"Total bits: {len(self.binary_buffer)}")
+            
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export binary stream:\n{e}")
     
     def update_status_indicators(self):
         """Update various status indicators"""
