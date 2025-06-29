@@ -32,6 +32,14 @@ UVB-76, also known as "The Buzzer," is a shortwave radio station that broadcasts
 - **Plot Export** (PNG, PDF, SVG formats)
 - **Session Statistics** and comprehensive data export
 
+### 🎤 Audio Recording & 🌊 Waterfall Logging
+- **5-Minute Audio Recording** - Automatic WAV file rotation for continuous recording
+- **High-Quality Audio** - 44.1kHz, 16-bit mono WAV files with timestamp naming
+- **Complete Spectral Data Logging** - Full frequency/magnitude/time data capture
+- **Multiple Export Formats** - NPZ (NumPy), PKL (Pickle), and CSV formats
+- **Standalone Analysis Tool** - Dedicated waterfall data analysis script
+- **Professional Analysis** - Signal strength monitoring, frequency tracking, and pattern detection
+
 ## 🚀 Installation
 
 ### Requirements
@@ -52,10 +60,15 @@ pip install numpy matplotlib scipy requests pandas
 
 ### Download and Run
 ```bash
-git clone [repository-url]
+git clone https://github.com/aaroncelestian/UVB-76-decoder.git
 cd uvb76-decoder
 python uvb76_stream_decoder.py
 ```
+
+### Additional Files
+- **`analyze_waterfall_data.py`** - Standalone waterfall data analysis tool
+- **`RECORDING_FEATURES.md`** - Detailed documentation for new recording features
+- **`requirements.txt`** - Python dependencies list
 
 ## 📖 Usage
 
@@ -76,7 +89,7 @@ python uvb76_stream_decoder.py
    - **Stream Control**: Connection and URL management
    - **Live Analysis**: Real-time frequency and binary state plots
    - **Decoded Data**: Binary stream and pattern analysis
-   - **Export & Settings**: Data export and session information
+   - **Export & Settings**: Data export, audio recording, and waterfall logging
 
 ### Understanding the Output
 
@@ -97,6 +110,52 @@ FSK Data Tone 2: 26.92 Hz (Binary 1)      ← Actual data transmission
 - **Red Region**: 21.53 Hz ± tolerance (Binary 0)
 - **Green Region**: 26.92 Hz ± tolerance (Binary 1)
 - **Gray Region**: 32.30 Hz ± tolerance (Carrier/Buzzer - ignored)
+
+### 🎤 Audio Recording Features
+
+#### Continuous Recording
+1. **Start Recording**: Click "🎤 Start Recording" in Export & Settings tab
+2. **Automatic Rotation**: New WAV file created every 5 minutes
+3. **Professional Quality**: 44.1kHz, 16-bit mono audio
+4. **Smart Naming**: `uvb76_recording_YYYYMMDD_HHMMSS_001.wav`
+5. **File Organization**: All recordings saved to `recordings/` directory
+
+#### Benefits
+- **Complete Audio Archive**: Never miss a transmission
+- **High-Quality Preservation**: Suitable for detailed analysis
+- **Manageable File Sizes**: ~25-30MB per 5-minute segment
+- **Automated Management**: No manual intervention required
+
+### 🌊 Waterfall Data Logging
+
+#### Spectral Data Capture
+1. **Start Logging**: Click "📈 Start Logging" in Detailed Spectral Logging section
+2. **Complete Data**: Captures frequency, magnitude, timestamps, and metadata
+3. **Export Options**: Choose NPZ (recommended), PKL, or CSV format
+4. **Analysis Ready**: Data optimized for scientific analysis
+
+#### Standalone Analysis Tool
+Use the included `analyze_waterfall_data.py` for advanced analysis:
+
+```bash
+# Basic waterfall visualization
+python analyze_waterfall_data.py waterfall_data.npz
+
+# Focus on UVB-76 frequency range
+python analyze_waterfall_data.py data.npz --freq-range 20 35
+
+# Analyze specific frequency over time
+python analyze_waterfall_data.py data.npz --target-freq 26.92 --save-plot
+
+# Generate analysis report
+python analyze_waterfall_data.py data.npz --export-summary
+```
+
+#### Data Analysis Capabilities
+- **Signal Strength Monitoring**: Track amplitude changes over time
+- **Frequency Tracking**: Monitor frequency stability and shifts
+- **Pattern Detection**: Identify transmission patterns and anomalies
+- **Publication-Quality Plots**: Export professional visualizations
 
 ## 🔬 Technical Details
 
@@ -135,6 +194,40 @@ timestamp,session_time,binary_state,frequency,bit_number
 ```csv
 timestamp,session_time,frequency,magnitude,audio_level
 1640995200.123,0.5,21.53,45.2,0.4978
+```
+
+### Audio Recording Files
+```
+recordings/
+├── uvb76_recording_20241201_143022_001.wav  (First 5-minute segment)
+├── uvb76_recording_20241201_143522_002.wav  (Second 5-minute segment)
+└── uvb76_recording_20241201_144022_003.wav  (Third 5-minute segment)
+```
+
+### Waterfall Data Formats
+
+#### NPZ Format (Recommended)
+```python
+# Load waterfall data
+import numpy as np
+data = np.load('waterfall_data.npz', allow_pickle=True)
+timestamps = data['timestamps']      # Unix timestamps
+magnitudes = data['magnitudes']      # 2D array [time, frequency]
+frequencies = data['frequencies']    # Frequency bins (Hz)
+metadata = data['metadata'].item()   # Session information
+```
+
+#### Analysis Usage
+```python
+# Create waterfall visualization
+import matplotlib.pyplot as plt
+plt.imshow(np.log10(magnitudes), aspect='auto', 
+           extent=[frequencies[0], frequencies[-1], 
+                  timestamps[-1], timestamps[0]])
+plt.xlabel('Frequency (Hz)')
+plt.ylabel('Time (s)')
+plt.colorbar(label='Magnitude (log10)')
+plt.show()
 ```
 
 ## 🛠️ Troubleshooting
@@ -203,7 +296,7 @@ Contributions welcome! Areas of interest:
 
 ## 📄 License
 
-[Add your preferred license here]
+MIT
 
 ---
 
