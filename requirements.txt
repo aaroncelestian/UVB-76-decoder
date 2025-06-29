@@ -1,0 +1,27 @@
+# UVB-76 Live Stream Decoder - Python Dependencies
+# Core scientific computing and signal processing
+numpy>=1.19.0,<2.0.0
+scipy>=1.6.0,<2.0.0
+
+# Data visualization and plotting
+matplotlib>=3.3.0,<4.0.0
+
+# HTTP requests for streaming
+requests>=2.25.0,<3.0.0
+
+# Data export and analysis
+pandas>=1.2.0,<3.0.0
+
+# Optional: Enhanced audio processing (uncomment if needed)
+# librosa>=0.8.0,<1.0.0
+
+# Development and testing (uncomment for development)
+# pytest>=6.0.0
+# black>=21.0.0
+# flake8>=3.8.0
+
+# Note: tkinter is usually included with Python installations
+# If you encounter tkinter import errors, you may need to install it separately:
+# - On Ubuntu/Debian: sudo apt-get install python3-tk
+# - On macOS: tkinter should be included with Python from python.org
+# - On Windows: tkinter should be included with Python installation 
