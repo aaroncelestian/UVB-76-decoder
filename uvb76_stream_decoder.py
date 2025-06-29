@@ -37,6 +37,20 @@ class UVB76StreamDecoder:
         self.waterfall_log = []  # Complete waterfall data storage
         self.session_start_time = None
         
+        # Audio recording functionality
+        self.audio_recording_enabled = False
+        self.current_audio_file = None
+        self.audio_file_start_time = None
+        self.audio_file_counter = 0
+        self.raw_audio_buffer = bytearray()
+        self.audio_recording_thread = None
+        self.AUDIO_FILE_DURATION = 5 * 60  # 5 minutes in seconds
+        
+        # Enhanced waterfall data logging (existing variables enhanced)
+        self.detailed_waterfall_log = []  # Store complete spectral data
+        self.waterfall_frequencies = None  # Frequency axis for waterfall
+        self.enable_detailed_logging = False
+        
         # Stream diagnostics
         self.bytes_received = 0
         self.chunks_processed = 0
@@ -426,12 +440,59 @@ class UVB76StreamDecoder:
         
         ttk.Label(data_frame, text="Export Raw Data:", style='Heading.TLabel').pack(anchor=tk.W, pady=(0, 5))
         
-        data_buttons = ttk.Frame(data_frame)
-        data_buttons.pack(fill=tk.X)
+        data_buttons_top = ttk.Frame(data_frame)
+        data_buttons_top.pack(fill=tk.X, pady=(0, 5))
         
-        ttk.Button(data_buttons, text="🔤 Binary Log", command=self.export_binary_log, width=15).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(data_buttons, text="📊 Frequency Data", command=self.export_frequency_log, width=15).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(data_buttons, text="📦 All Data", command=self.export_all_data, width=15).pack(side=tk.LEFT)
+        ttk.Button(data_buttons_top, text="🔤 Binary Log", command=self.export_binary_log, width=15).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(data_buttons_top, text="📊 Frequency Data", command=self.export_frequency_log, width=15).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(data_buttons_top, text="📦 All Data", command=self.export_all_data, width=15).pack(side=tk.LEFT)
+        
+        data_buttons_bottom = ttk.Frame(data_frame)
+        data_buttons_bottom.pack(fill=tk.X)
+        
+        ttk.Button(data_buttons_bottom, text="🌊 Waterfall Data", command=self.export_waterfall_data, width=15).pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Audio recording section
+        audio_frame = ttk.LabelFrame(export_tab, text="Audio Recording", padding=15)
+        audio_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        ttk.Label(audio_frame, text="Record stream audio to 5-minute WAV files:", style='Heading.TLabel').pack(anchor=tk.W, pady=(0, 10))
+        
+        audio_controls = ttk.Frame(audio_frame)
+        audio_controls.pack(fill=tk.X)
+        
+        self.record_btn = ttk.Button(audio_controls, text="🎤 Start Recording", 
+                                    command=self.toggle_audio_recording, width=18)
+        self.record_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.recording_status_var = tk.StringVar(value="Not recording")
+        ttk.Label(audio_controls, textvariable=self.recording_status_var, 
+                 style='Status.TLabel').pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Waterfall logging section  
+        waterfall_frame = ttk.LabelFrame(export_tab, text="Detailed Spectral Logging", padding=15)
+        waterfall_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        
+        ttk.Label(waterfall_frame, text="Log complete spectral data for future analysis:", 
+                 style='Heading.TLabel').pack(anchor=tk.W, pady=(0, 10))
+        
+        waterfall_controls = ttk.Frame(waterfall_frame)
+        waterfall_controls.pack(fill=tk.X)
+        
+        self.detailed_log_btn = ttk.Button(waterfall_controls, text="📈 Start Logging", 
+                                          command=self.toggle_detailed_logging, width=18)
+        self.detailed_log_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.detailed_log_status_var = tk.StringVar(value="Not logging")
+        ttk.Label(waterfall_controls, textvariable=self.detailed_log_status_var, 
+                 style='Status.TLabel').pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Info about detailed logging
+        info_text = ttk.Label(waterfall_frame, 
+                             text="⚠️ Detailed logging captures complete frequency/magnitude data.\n"
+                                  "Files can be large (several MB per minute). Use for focused analysis sessions.",
+                             style='Status.TLabel', wraplength=600)
+        info_text.pack(anchor=tk.W, pady=(10, 0))
         
         # Session info section
         session_frame = ttk.LabelFrame(export_tab, text="Session Information", padding=15)
@@ -920,6 +981,18 @@ Analysis:
         self.is_streaming = False
         self.stream_btn.config(text="🎵 Start Stream")
         self.status_var.set("Stream stopped")
+        
+        # Stop audio recording if active
+        if self.audio_recording_enabled:
+            self.stop_audio_recording()
+            self.record_btn.config(text="🎤 Start Recording")
+            self.recording_status_var.set("Not recording")
+        
+        # Stop detailed logging if active
+        if self.enable_detailed_logging:
+            self.stop_detailed_logging()
+            self.detailed_log_btn.config(text="📈 Start Logging")
+            self.detailed_log_status_var.set("Not logging")
     
     def stream_audio(self, url):
         """Stream audio from URL and put chunks in queue"""
@@ -994,6 +1067,11 @@ Analysis:
                 chunk = self.audio_queue.get(timeout=1.0)
                 audio_buffer.extend(chunk)
                 
+                # Add to audio recording buffer if recording is enabled
+                if self.audio_recording_enabled:
+                    self.raw_audio_buffer.extend(chunk)
+                    self.check_audio_file_rotation()
+                
                 # Process when we have enough data
                 if len(audio_buffer) >= self.chunk_size * 4:  # ~4 chunks for analysis
                     self.process_audio_chunk(audio_buffer)
@@ -1004,6 +1082,88 @@ Analysis:
                 continue
             except Exception as e:
                 print(f"Analysis error: {e}")
+    
+    def start_audio_recording(self):
+        """Start recording audio to files with 5-minute rotation"""
+        if self.audio_recording_enabled:
+            return
+            
+        self.audio_recording_enabled = True
+        self.audio_file_counter = 0
+        self.raw_audio_buffer = bytearray()
+        
+        # Create recordings directory
+        import os
+        os.makedirs("recordings", exist_ok=True)
+        
+        self.start_new_audio_file()
+        print("Audio recording started - files will rotate every 5 minutes")
+    
+    def stop_audio_recording(self):
+        """Stop audio recording and save current file"""
+        if not self.audio_recording_enabled:
+            return
+            
+        self.audio_recording_enabled = False
+        self.save_current_audio_file()
+        print("Audio recording stopped")
+    
+    def start_new_audio_file(self):
+        """Start a new audio recording file"""
+        import os
+        from datetime import datetime
+        
+        # Save current file if exists
+        if self.current_audio_file:
+            self.save_current_audio_file()
+        
+        # Create new filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.audio_file_counter += 1
+        filename = f"recordings/uvb76_recording_{timestamp}_{self.audio_file_counter:03d}.wav"
+        
+        self.current_audio_file = filename
+        self.audio_file_start_time = time.time()
+        self.raw_audio_buffer = bytearray()
+        
+        print(f"Started new audio file: {filename}")
+    
+    def save_current_audio_file(self):
+        """Save the current audio buffer to a WAV file"""
+        if not self.current_audio_file or len(self.raw_audio_buffer) == 0:
+            return
+            
+        try:
+            import wave
+            
+            # Convert raw audio buffer to numpy array
+            # Assume 16-bit PCM audio from stream
+            audio_data = np.frombuffer(self.raw_audio_buffer, dtype=np.int16)
+            
+            # Save as WAV file
+            with wave.open(self.current_audio_file, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(self.sample_rate)
+                wav_file.writeframes(audio_data.tobytes())
+            
+            duration = time.time() - self.audio_file_start_time if self.audio_file_start_time else 0
+            file_size = len(self.raw_audio_buffer) / (1024 * 1024)  # MB
+            
+            print(f"Saved audio file: {self.current_audio_file}")
+            print(f"Duration: {duration:.1f}s, Size: {file_size:.1f}MB")
+            
+        except Exception as e:
+            print(f"Error saving audio file: {e}")
+    
+    def check_audio_file_rotation(self):
+        """Check if current audio file should be rotated (5 minute limit)"""
+        if not self.audio_file_start_time:
+            return
+            
+        elapsed_time = time.time() - self.audio_file_start_time
+        if elapsed_time >= self.AUDIO_FILE_DURATION:
+            self.start_new_audio_file()
     
     def process_audio_chunk(self, audio_bytes):
         """Process audio chunk and extract frequency"""
@@ -1078,6 +1238,26 @@ Analysis:
             
             self.waterfall_data.append(waterfall_magnitude)
             self.waterfall_times.append(current_time)
+            
+            # Store frequency axis on first run
+            if self.waterfall_frequencies is None:
+                self.waterfall_frequencies = waterfall_freqs.copy()
+            
+            # Enhanced waterfall logging for spectral analysis
+            if self.enable_detailed_logging:
+                waterfall_entry = {
+                    'timestamp': current_time,
+                    'frequencies': waterfall_freqs.copy(),
+                    'magnitudes': waterfall_magnitude.copy(),
+                    'sample_rate': self.sample_rate,
+                    'window_size': window_size,
+                    'audio_level': audio_level
+                }
+                self.detailed_waterfall_log.append(waterfall_entry)
+                
+                # Limit detailed log size to prevent memory issues
+                if len(self.detailed_waterfall_log) > 1000:  # Keep last 1000 entries
+                    self.detailed_waterfall_log.pop(0)
             
             # Keep only recent waterfall data
             if len(self.waterfall_data) > self.max_waterfall_lines:
@@ -2107,6 +2287,149 @@ Analysis:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to export data:\n{e}")
+    
+    def start_detailed_logging(self):
+        """Start detailed waterfall logging for spectral analysis"""
+        self.enable_detailed_logging = True
+        self.detailed_waterfall_log = []
+        print("Detailed waterfall logging started")
+    
+    def stop_detailed_logging(self):
+        """Stop detailed waterfall logging"""
+        self.enable_detailed_logging = False
+        print("Detailed waterfall logging stopped")
+    
+    def toggle_audio_recording(self):
+        """Toggle audio recording on/off"""
+        if self.audio_recording_enabled:
+            self.stop_audio_recording()
+            self.record_btn.config(text="🎤 Start Recording")
+            self.recording_status_var.set("Not recording")
+        else:
+            self.start_audio_recording()
+            self.record_btn.config(text="⏹️ Stop Recording")
+            self.recording_status_var.set("Recording to WAV files...")
+    
+    def toggle_detailed_logging(self):
+        """Toggle detailed waterfall logging on/off"""
+        if self.enable_detailed_logging:
+            self.stop_detailed_logging()
+            self.detailed_log_btn.config(text="📈 Start Logging")
+            self.detailed_log_status_var.set("Not logging")
+        else:
+            self.start_detailed_logging()
+            self.detailed_log_btn.config(text="⏹️ Stop Logging")
+            self.detailed_log_status_var.set("Logging spectral data...")
+    
+    def export_waterfall_data(self):
+        """Export waterfall data in format suitable for spectral analysis"""
+        if not self.detailed_waterfall_log and not self.waterfall_data:
+            messagebox.showwarning("No Data", "No waterfall data to export.")
+            return
+        
+        from datetime import datetime
+        from tkinter import filedialog
+        import pickle
+        import os
+        
+        # Ask user for save location
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".npz",
+            filetypes=[
+                ("NumPy Archive", "*.npz"),
+                ("Pickle file", "*.pkl"),
+                ("CSV file", "*.csv"),
+                ("All files", "*.*")
+            ],
+            initialfilename=f"uvb76_waterfall_{timestamp}.npz",
+            title="Export Waterfall Data"
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            if filename.endswith('.npz'):
+                # Export as NumPy archive (recommended for spectral analysis)
+                if self.detailed_waterfall_log:
+                    # Use detailed log data
+                    timestamps = [entry['timestamp'] for entry in self.detailed_waterfall_log]
+                    frequencies = [entry['frequencies'] for entry in self.detailed_waterfall_log]
+                    magnitudes = [entry['magnitudes'] for entry in self.detailed_waterfall_log]
+                    sample_rates = [entry['sample_rate'] for entry in self.detailed_waterfall_log]
+                    audio_levels = [entry['audio_level'] for entry in self.detailed_waterfall_log]
+                    
+                    np.savez_compressed(filename,
+                                      timestamps=np.array(timestamps),
+                                      frequencies=np.array(frequencies),
+                                      magnitudes=np.array(magnitudes),
+                                      sample_rates=np.array(sample_rates),
+                                      audio_levels=np.array(audio_levels),
+                                      waterfall_freqs=self.waterfall_frequencies,
+                                      metadata={
+                                          'session_start': self.session_start_time,
+                                          'export_time': time.time(),
+                                          'sample_rate': self.sample_rate,
+                                          'chunk_size': self.chunk_size
+                                      })
+                else:
+                    # Use basic waterfall data
+                    np.savez_compressed(filename,
+                                      timestamps=np.array(self.waterfall_times),
+                                      magnitudes=np.array(self.waterfall_data),
+                                      frequencies=self.waterfall_frequencies,
+                                      metadata={
+                                          'session_start': self.session_start_time,
+                                          'export_time': time.time(),
+                                          'sample_rate': self.sample_rate,
+                                          'chunk_size': self.chunk_size
+                                      })
+                
+            elif filename.endswith('.pkl'):
+                # Export as pickle file
+                export_data = {
+                    'detailed_log': self.detailed_waterfall_log,
+                    'waterfall_data': self.waterfall_data,
+                    'waterfall_times': self.waterfall_times,
+                    'waterfall_frequencies': self.waterfall_frequencies,
+                    'metadata': {
+                        'session_start': self.session_start_time,
+                        'export_time': time.time(),
+                        'sample_rate': self.sample_rate,
+                        'chunk_size': self.chunk_size
+                    }
+                }
+                with open(filename, 'wb') as f:
+                    pickle.dump(export_data, f)
+                    
+            elif filename.endswith('.csv'):
+                # Export as CSV (basic format)
+                with open(filename, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    if self.detailed_waterfall_log:
+                        writer.writerow(['Timestamp', 'Frequency_Hz', 'Magnitude', 'Audio_Level'])
+                        for entry in self.detailed_waterfall_log:
+                            freqs = entry['frequencies']
+                            mags = entry['magnitudes']
+                            for freq, mag in zip(freqs, mags):
+                                writer.writerow([entry['timestamp'], freq, mag, entry['audio_level']])
+                    else:
+                        writer.writerow(['Timestamp', 'Frequency_Bin', 'Magnitude'])
+                        for i, (timestamp, magnitude_array) in enumerate(zip(self.waterfall_times, self.waterfall_data)):
+                            for j, mag in enumerate(magnitude_array):
+                                writer.writerow([timestamp, j, mag])
+            
+            file_size = os.path.getsize(filename) / (1024 * 1024)  # MB
+            messagebox.showinfo("Export Complete", 
+                              f"Waterfall data exported successfully!\n\n"
+                              f"File: {filename}\n"
+                              f"Size: {file_size:.1f} MB\n"
+                              f"Entries: {len(self.detailed_waterfall_log) if self.detailed_waterfall_log else len(self.waterfall_data)}")
+            
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Failed to export waterfall data: {e}")
+            print(f"Waterfall export error: {e}")
     
     def run(self):
         """Run the GUI application"""
