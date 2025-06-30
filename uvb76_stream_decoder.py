@@ -943,23 +943,24 @@ Analysis:
             self.stop_stream()
     
     def start_stream(self):
-        """Start streaming audio from URL"""
-        url = self.stream_url.get()
-        
-        if not url:
-            messagebox.showwarning("No URL", "Please enter a stream URL")
+        """Start the audio stream and analysis"""
+        if self.is_streaming:
             return
-        
+            
         self.is_streaming = True
-        self.stream_btn.config(text="⏹️ Stop Stream")
-        self.status_var.set("Connecting to stream...")
-        
-        # Initialize session
         self.session_start_time = time.time()
-        session_time = time.strftime("%Y-%m-%d_%H-%M-%S")
-        self.session_info_var.set(f"Session started: {session_time}")
+        self.bytes_received = 0
+        self.chunks_processed = 0
         
-        # Clear buffers and logs
+        # Update button and status
+        self.stream_btn.config(text="⏹️ Stop Stream")
+        self.status_var.set("Starting stream...")
+        
+        # Update recording status if recording is active
+        if self.audio_recording_enabled:
+            self.recording_status_var.set("Recording to WAV files...")
+        
+        # Clear buffers for new session
         self.frequency_buffer.clear()
         self.binary_buffer.clear()
         self.time_buffer.clear()
@@ -967,13 +968,13 @@ Analysis:
         self.waterfall_data.clear()
         self.waterfall_times.clear()
         
-        # Initialize logs
-        self.binary_log = []
-        self.frequency_log = []
-        self.waterfall_log = []
+        # Clear logs
+        self.binary_log.clear()
+        self.frequency_log.clear()
+        self.waterfall_log.clear()
         
         # Start streaming thread
-        self.stream_thread = threading.Thread(target=self.stream_audio, args=(url,))
+        self.stream_thread = threading.Thread(target=self.stream_audio, args=(self.stream_url.get(),))
         self.stream_thread.daemon = True
         self.stream_thread.start()
         
@@ -988,11 +989,9 @@ Analysis:
         self.stream_btn.config(text="🎵 Start Stream")
         self.status_var.set("Stream stopped")
         
-        # Stop audio recording if active
-        if self.audio_recording_enabled:
-            self.stop_audio_recording()
-            self.record_btn.config(text="🎤 Start Recording")
-            self.recording_status_var.set("Not recording")
+        # NOTE: Don't automatically stop audio recording when stream stops
+        # Audio recording should be independent of stream control
+        # Users can manually control recording with the record button
         
         # Stop detailed logging if active
         if self.enable_detailed_logging:
@@ -1085,9 +1084,17 @@ Analysis:
                     audio_buffer = audio_buffer[self.chunk_size * 2:]
                     
             except queue.Empty:
+                # Update recording status to show when recording but no data coming in
+                if self.audio_recording_enabled and not self.is_streaming:
+                    self.recording_status_var.set("Recording paused (no stream)")
                 continue
             except Exception as e:
                 print(f"Analysis error: {e}")
+        
+        # When streaming stops, update recording status if still recording
+        if self.audio_recording_enabled:
+            self.recording_status_var.set("Recording paused (stream stopped)")
+            print("Audio recording paused - stream stopped but recording still active")
     
     def start_audio_recording(self):
         """Start recording audio to files with 5-minute rotation"""
@@ -2314,7 +2321,10 @@ Analysis:
         else:
             self.start_audio_recording()
             self.record_btn.config(text="⏹️ Stop Recording")
-            self.recording_status_var.set("Recording to WAV files...")
+            if self.is_streaming:
+                self.recording_status_var.set("Recording to WAV files...")
+            else:
+                self.recording_status_var.set("Recording ready (waiting for stream)")
     
     def toggle_detailed_logging(self):
         """Toggle detailed waterfall logging on/off"""
@@ -2445,6 +2455,12 @@ Analysis:
             # Handle window closing
             def on_closing():
                 self.stop_stream()
+                
+                # Stop audio recording if active (important since stream stop no longer does this)
+                if self.audio_recording_enabled:
+                    self.stop_audio_recording()
+                    print("Audio recording stopped due to application exit")
+                
                 if self.plot_update_timer:
                     root.after_cancel(self.plot_update_timer)
                 root.destroy()
