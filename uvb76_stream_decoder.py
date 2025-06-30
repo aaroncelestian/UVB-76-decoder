@@ -552,6 +552,9 @@ class UVB76StreamDecoder:
             messagebox.showwarning("Export Warning", "Insufficient data for analysis export.\nNeed at least 8 bits of data.")
             return
         
+        # Import required modules
+        from tkinter import filedialog
+        
         # Get file path
         filename = filedialog.asksaveasfilename(
             defaultextension=".txt",
@@ -561,7 +564,7 @@ class UVB76StreamDecoder:
                 ("All files", "*.*")
             ],
             title="Export Decoded Data Analysis",
-            initialname=f"uvb76_analysis_{int(time.time())}.txt"
+            initialfile=f"uvb76_analysis_{int(time.time())}.txt"
         )
         
         if not filename:
@@ -716,6 +719,9 @@ class UVB76StreamDecoder:
             messagebox.showwarning("Export Warning", "No binary data available for export.")
             return
         
+        # Import required modules
+        from tkinter import filedialog
+        
         # Get file path
         filename = filedialog.asksaveasfilename(
             defaultextension=".csv",
@@ -726,7 +732,7 @@ class UVB76StreamDecoder:
                 ("All files", "*.*")
             ],
             title="Export Binary Stream Data",
-            initialname=f"uvb76_binary_{int(time.time())}.csv"
+            initialfile=f"uvb76_binary_{int(time.time())}.csv"
         )
         
         if not filename:
@@ -2342,7 +2348,7 @@ Analysis:
                 ("CSV file", "*.csv"),
                 ("All files", "*.*")
             ],
-            initialfilename=f"uvb76_waterfall_{timestamp}.npz",
+            initialfile=f"uvb76_waterfall_{timestamp}.npz",
             title="Export Waterfall Data"
         )
         
